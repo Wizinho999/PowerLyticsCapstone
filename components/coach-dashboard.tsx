@@ -324,17 +324,12 @@ export function CoachDashboard() {
 
       case "competitions":
         return (
-          <Card className="max-w-2xl mx-auto mt-12">
-            <CardHeader>
-              <CardTitle>Sección en desarrollo</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground mb-4">Esta funcionalidad estará disponible próximamente.</p>
-              <Button onClick={() => setActiveSection("overview")} variant="outline">
-                Volver al resumen
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-3xl font-bold text-foreground mb-2">Planificar Competiciones</h2>
+              <p className="text-muted-foreground">Sección en desarrollo</p>
+            </div>
+          </div>
         )
 
       case "athletes":
