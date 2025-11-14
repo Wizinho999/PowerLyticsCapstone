@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +11,7 @@ import { CoachBlocksList } from "@/components/coach-blocks-list"
 import { SubscriptionPlans } from "@/components/subscription-plans"
 import { PerformanceAnalytics } from "@/components/performance-analytics"
 import { SimpleBillingManagement } from "@/components/simple-billing-management"
+import { CompetitionPlanning } from "@/components/competition-planning"
 
 export function CoachDashboard() {
   const [activeSection, setActiveSection] = useState("overview")
@@ -323,14 +324,7 @@ export function CoachDashboard() {
         return <SimpleBillingManagement coachId={coachId} />
 
       case "competitions":
-        return (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-3xl font-bold text-foreground mb-2">Planificar Competiciones</h2>
-              <p className="text-muted-foreground">Sección en desarrollo</p>
-            </div>
-          </div>
-        )
+        return <CompetitionPlanning />
 
       case "athletes":
         return <CoachAthleteManagement />
@@ -374,8 +368,12 @@ export function CoachDashboard() {
           {menuItems.map((item) => (
             <Button
               key={item.id}
-              variant={activeSection === item.id ? "secondary" : "ghost"}
-              className="w-full justify-start gap-3 px-3 py-2"
+              variant={activeSection === item.id ? "default" : "ghost"}
+              className={`w-full justify-start gap-3 px-3 py-2 ${
+                activeSection === item.id
+                  ? "bg-green-100 text-green-800 hover:bg-blue-100 hover:text-blue-800"
+                  : "hover:bg-blue-100 hover:text-blue-800"
+              }`}
               onClick={() => setActiveSection(item.id)}
             >
               <span className="text-sm">{item.label}</span>
