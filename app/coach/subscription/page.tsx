@@ -54,29 +54,55 @@ export default function SubscriptionPage() {
     }
   }
 
-  const handleSelectPlan = async (planId: string, priceId: string) => {
+  const handleSelectPlan = async (planId: string) => {
     try {
       const {
         data: { user },
       } = await supabase.auth.getUser()
       if (!user) return
 
-      // Create Stripe Checkout Session
-      const response = await fetch("/api/create-checkout-session", {
+      const response = await fetch("/api/create-subscription", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          priceId,
           planId,
           userId: user.id,
         }),
       })
 
-      const { url } = await response.json()
-      if (url) {
-        window.location.href = url
+      const rawResponse = await response.text()
+      let result: Record<string, unknown> | null = null
+
+      try {
+        result = rawResponse ? (JSON.parse(rawResponse) as Record<string, unknown>) : null
+      } catch (parseError) {
+        console.error("[v0] No JSON response from create-subscription:", {
+          parseError,
+          rawResponse,
+        })
+      }
+
+      if (!response.ok) {
+        console.error("[v0] Error creating subscription preference:", result ?? rawResponse)
+        const errorMessage =
+          (result && (result.error as string)) ||
+          (result && (result.details as string)) ||
+          rawResponse ||
+          "No se pudo iniciar el pago con Mercado Pago. Intenta nuevamente."
+        alert(errorMessage)
+        return
+      }
+
+      const redirectUrl =
+        (result?.initPoint as string | undefined) || (result?.sandboxInitPoint as string | undefined)
+
+      if (redirectUrl) {
+        window.location.href = redirectUrl
+      } else {
+        console.error("[v0] No init point returned from Mercado Pago:", result)
+        alert("No se recibió la URL de pago. Revisa la consola del servidor.")
       }
     } catch (error) {
       console.error("[v0] Error creating checkout session:", error)

@@ -42,7 +42,7 @@ export function AuthPage() {
 
     try {
       if (mode === "register") {
-        console.log("[v0] Starting registration process...")
+        console.log("Starting registration process...")
         const { data, error: signUpError } = await supabase.auth.signUp({
           email: formData.email,
           password: formData.password,
@@ -58,13 +58,13 @@ export function AuthPage() {
         if (signUpError) throw signUpError
 
         if (data.user) {
-          console.log("[v0] Registration successful:", data.user.id)
+          console.log("Registration successful:", data.user.id)
           setSuccessMessage(
             "¡Registro exitoso! Por favor revisa tu email para verificar tu cuenta. Puedes cerrar esta ventana.",
           )
         }
       } else {
-        console.log("[v0] Starting login process...")
+        console.log("Starting login process...")
         const { data, error: signInError } = await supabase.auth.signInWithPassword({
           email: formData.email,
           password: formData.password,
@@ -73,21 +73,21 @@ export function AuthPage() {
         if (signInError) throw signInError
 
         if (data.user) {
-          console.log("[v0] Login successful:", data.user.id)
+          console.log("Login successful:", data.user.id)
           const userRole = data.user.user_metadata?.role || "athlete"
-          console.log("[v0] User role:", userRole)
+          console.log("User role:", userRole)
 
           setSuccessMessage("¡Inicio de sesión exitoso! Redirigiendo...")
 
           await new Promise((resolve) => setTimeout(resolve, 500))
 
           const redirectPath = userRole === "coach" ? "/coach" : "/dashboard"
-          console.log("[v0] Redirecting to:", redirectPath)
+          console.log("Redirecting to:", redirectPath)
           window.location.href = redirectPath
         }
       }
     } catch (error: any) {
-      console.error("[v0] Authentication error:", error)
+      console.error("Authentication error:", error)
       setError(error.message || "Error en la autenticación")
     } finally {
       setIsLoading(false)

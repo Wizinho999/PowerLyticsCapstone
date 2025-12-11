@@ -8,6 +8,7 @@ import { ChevronLeft, Plus, MoreHorizontal } from "lucide-react"
 import { BottomNavigation } from "@/components/bottom-navigation"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { createBrowserClient } from "@/lib/supabase/client"
+import { LoadingLogo } from "@/components/loading-logo"
 
 interface DayExercise {
   id: string
@@ -64,28 +65,33 @@ export default function DayDetailPage() {
 
       if (exercisesError) throw exercisesError
 
-      console.log("[v0] Raw exercises data:", exercisesData)
+      const exerciseIds = (exercisesData || []).filter((ex: any) => ex.exercise !== null).map((ex: any) => ex.id)
 
-      const formattedExercises = await Promise.all(
-        (exercisesData || [])
-          .filter((ex: any) => ex.exercise !== null)
-          .map(async (ex: any) => {
-            const { count } = await supabase
-              .from("exercise_sets")
-              .select("*", { count: "exact", head: true })
-              .eq("day_exercise_id", ex.id)
+      // Fetch all sets for all exercises in a single query
+      const { data: allSets, error: setsError } = await supabase
+        .from("exercise_sets")
+        .select("day_exercise_id")
+        .in("day_exercise_id", exerciseIds)
 
-            return {
-              id: ex.id,
-              exercise_name: ex.exercise.name,
-              target_sets: ex.target_sets,
-              actual_sets: count || 0,
-              order_index: ex.order_index,
-            }
-          }),
-      )
+      if (setsError) throw setsError
 
-      console.log("[v0] Formatted exercises:", formattedExercises)
+      // Count sets in memory (super fast)
+      const setCounts: Record<string, number> = {}
+      ;(allSets || []).forEach((set: any) => {
+        setCounts[set.day_exercise_id] = (setCounts[set.day_exercise_id] || 0) + 1
+      })
+
+      // Format exercises with the counted sets
+      const formattedExercises = (exercisesData || [])
+        .filter((ex: any) => ex.exercise !== null)
+        .map((ex: any) => ({
+          id: ex.id,
+          exercise_name: ex.exercise.name,
+          target_sets: ex.target_sets,
+          actual_sets: setCounts[ex.id] || 0,
+          order_index: ex.order_index,
+        }))
+
       setExercises(formattedExercises)
     } catch (error) {
       console.error("[v0] Error loading day data:", error)
@@ -97,7 +103,7 @@ export default function DayDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-muted flex items-center justify-center">
-        <div className="text-muted-foreground">Cargando...</div>
+        <LoadingLogo size="lg" />
       </div>
     )
   }

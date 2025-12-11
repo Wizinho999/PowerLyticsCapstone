@@ -1,10 +1,10 @@
-import { createBrowserClient as createSupabaseBrowserClient } from "@supabase/ssr"
+import { createBrowserClient as supabaseCreateBrowserClient } from "@supabase/ssr"
+import { supabaseConfig } from "./config"
 
 export function createBrowserClient() {
-  return createSupabaseBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+  return supabaseCreateBrowserClient(supabaseConfig.url, supabaseConfig.anonKey)
 }
 
-// Keep legacy export for backwards compatibility
 export function createClient() {
   return createBrowserClient()
 }

@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   title: 'PowerLytics',
   description: 'Plataforma de gestión de entrenamiento deportivo',
   icons: {
-    icon: '/icon.svg',
+    icon: '/icon.png',
   },
 }
 

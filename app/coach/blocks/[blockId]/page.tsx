@@ -1,19 +1,22 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useParams, useRouter } from "next/navigation"
-import { createBrowserClient } from "@/lib/supabase/client"
+import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react"
-import { AuthGuard } from "@/components/auth-guard"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Plus, Trash2, ArrowLeft, Copy, Edit } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { updateExerciseSets } from "@/lib/supabase/actions" // Assuming this is the server action
 
 interface TrainingDay {
   id: string
   name: string
   day_number: number
+  scheduled_date: string | null
+  week_number: number
 }
 
 interface ExerciseSet {
@@ -22,6 +25,7 @@ interface ExerciseSet {
   target_reps: number
   target_weight: number | null
   target_rpe: number | null
+  target_percentage: number | null
 }
 
 interface Exercise {
@@ -37,6 +41,8 @@ interface Block {
   athlete_name: string
   start_date: string | null
   end_date: string | null
+  description: string | null
+  total_weeks: number
 }
 
 interface NewSet {
@@ -45,39 +51,66 @@ interface NewSet {
   rpe: string
 }
 
-export default function CoachBlockDetailPage() {
-  const params = useParams()
-  const router = useRouter()
-  const blockId = params.blockId as string
+interface CoachBlockPageProps {
+  params: { blockId: string }
+}
 
-  const [block, setBlock] = useState<Block | null>(null)
-  const [days, setDays] = useState<TrainingDay[]>([])
+export default function CoachBlockPage({ params }: CoachBlockPageProps) {
+  const { blockId } = params
+  const router = useRouter()
+  const supabase = createClient()
+
+  const [block, setBlock] = useState<any>(null)
+  const [days, setDays] = useState<any[]>([])
   const [currentDayIndex, setCurrentDayIndex] = useState(0)
-  const [exercises, setExercises] = useState<Exercise[]>([])
+  const [exercisesByDay, setExercisesByDay] = useState<Record<string, any[]>>({})
+  const [selectedExercise, setSelectedExercise] = useState<any>(null)
+  const [sets, setSets] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [showAddExercise, setShowAddExercise] = useState(false)
-  const [newExercise, setNewExercise] = useState({
-    name: "",
-  })
-  const [newSets, setNewSets] = useState<NewSet[]>([{ reps: "", weight: "", rpe: "" }])
+  const [saving, setSaving] = useState(false)
+  const [athletes, setAthletes] = useState<any[]>([])
+  const [showAddExerciseForm, setShowAddExerciseForm] = useState(false)
+  const [newExercise, setNewExercise] = useState({ name: "", sets: [{ reps: "", rpe: "", weight: "" }] })
+  const [openWeek, setOpenWeek] = useState<string>("week-1") // Track which week accordion is open
+  const [showDateEditor, setShowDateEditor] = useState(false) // Declared setShowDateEditor variable
+  const [editingExerciseId, setEditingExerciseId] = useState<string | null>(null)
+  const [editingExercise, setEditingExercise] = useState<{
+    name: string
+    sets: { id: string; set_number: number; reps: number; weight: number | null; rpe: number | null }[]
+  } | null>(null)
+
+  const daysByWeek = days.reduce(
+    (acc, day) => {
+      const weekNum = day.week_number || 1
+      if (!acc[weekNum]) {
+        acc[weekNum] = []
+      }
+      acc[weekNum].push(day)
+      return acc
+    },
+    {} as Record<number, any[]>,
+  )
+
+  const weekNumbers = Object.keys(daysByWeek)
+    .map(Number)
+    .sort((a, b) => a - b)
 
   useEffect(() => {
-    loadBlockData()
+    if (blockId !== "new") {
+      loadBlockData()
+    }
   }, [blockId])
 
-  useEffect(() => {
-    if (days.length > 0) {
-      loadDayExercises(days[currentDayIndex].id)
-    }
-  }, [currentDayIndex, days])
-
   async function loadBlockData() {
-    try {
-      const supabase = createBrowserClient()
+    if (blockId === "new") {
+      setLoading(false)
+      return
+    }
 
+    try {
       const { data: blockData, error: blockError } = await supabase
         .from("training_blocks")
-        .select("id, name, start_date, end_date")
+        .select("id, name, start_date, end_date, description, total_weeks")
         .eq("id", blockId)
         .single()
 
@@ -104,12 +137,16 @@ export default function CoachBlockDetailPage() {
 
       const { data: daysData, error: daysError } = await supabase
         .from("training_days")
-        .select("id, name, day_number")
+        .select("id, name, day_number, scheduled_date, week_number")
         .eq("block_id", blockId)
-        .order("day_number")
+        .order("week_number, day_number")
 
       if (daysError) throw daysError
       setDays(daysData || [])
+
+      if (daysData && daysData.length > 0) {
+        await loadAllExercises(daysData.map((d) => d.id))
+      }
 
       setLoading(false)
     } catch (err: any) {
@@ -118,64 +155,85 @@ export default function CoachBlockDetailPage() {
     }
   }
 
-  async function loadDayExercises(dayId: string) {
+  async function loadAllExercises(dayIds: string[]) {
     try {
-      const supabase = createBrowserClient()
+      console.log("[v0] Pre-loading exercises for", dayIds.length, "days")
 
-      const { data: exercisesData, error } = await supabase
+      // Load ALL exercises for ALL days in ONE query
+      const { data: exercisesData, error: exercisesError } = await supabase
         .from("day_exercises")
         .select(`
           id,
+          training_day_id,
           exercises (name),
           exercise_sets (
             id,
             set_number,
             target_reps,
             target_weight,
-            target_rpe
+            target_rpe,
+            target_percentage
           )
         `)
-        .eq("training_day_id", dayId)
+        .in("training_day_id", dayIds)
         .order("order_index")
 
-      if (error) throw error
+      if (exercisesError) throw exercisesError
 
-      const formattedExercises = await Promise.all(
-        (exercisesData || []).map(async (ex: any) => {
-          const { count } = await supabase
-            .from("exercise_logs")
-            .select("*", { count: "exact", head: true })
-            .eq("day_exercise_id", ex.id)
+      // Get all exercise IDs to fetch logs
+      const exerciseIds = (exercisesData || []).map((ex: any) => ex.id)
 
-          return {
-            id: ex.id,
-            exercise_name: ex.exercises?.name || "Sin nombre",
-            sets: ex.exercise_sets || [],
-            actual_sets: count || 0,
-          }
-        }),
-      )
+      // Fetch ALL logs in ONE query
+      const { data: logsData } = await supabase
+        .from("exercise_logs")
+        .select("day_exercise_id")
+        .in("day_exercise_id", exerciseIds)
 
-      setExercises(formattedExercises)
+      // Count logs per exercise in memory
+      const logCounts = (logsData || []).reduce((acc: Record<string, number>, log: any) => {
+        acc[log.day_exercise_id] = (acc[log.day_exercise_id] || 0) + 1
+        return acc
+      }, {})
+
+      // Group exercises by day
+      const exercisesByDayMap: Record<string, any[]> = {}
+
+      for (const ex of exercisesData || []) {
+        const dayId = ex.training_day_id
+        if (!exercisesByDayMap[dayId]) {
+          exercisesByDayMap[dayId] = []
+        }
+
+        exercisesByDayMap[dayId].push({
+          id: ex.id,
+          exercise_name: ex.exercises?.name || "Sin nombre",
+          sets: ex.exercise_sets || [],
+          actual_sets: logCounts[ex.id] || 0,
+        })
+      }
+
+      setExercisesByDay(exercisesByDayMap)
+      console.log("[v0] Pre-loaded exercises for", Object.keys(exercisesByDayMap).length, "days")
     } catch (err: any) {
-      console.error("[v0] Error loading exercises:", err)
+      console.error("[v0] Error pre-loading exercises:", err.message)
     }
   }
 
   async function handleAddExercise() {
+    if (saving) return
+
     if (!newExercise.name.trim() || !days[currentDayIndex]) return
 
-    const validSets = newSets.filter((s) => s.reps)
+    const validSets = newExercise.sets.filter((s) => s.reps)
     if (validSets.length === 0) {
       alert("Debes agregar al menos una serie con repeticiones")
       return
     }
 
-    try {
-      const supabase = createBrowserClient()
-      const { data: user } = await supabase.auth.getUser()
+    setSaving(true)
 
-      console.log("[v0] Creating exercise:", newExercise.name)
+    try {
+      const { data: user } = await supabase.auth.getUser()
 
       const { data: exerciseData, error: exerciseError } = await supabase
         .from("exercises")
@@ -188,7 +246,6 @@ export default function CoachBlockDetailPage() {
         .single()
 
       if (exerciseError) throw exerciseError
-      console.log("[v0] Exercise created:", exerciseData)
 
       const { data: dayExData, error: dayExError } = await supabase
         .from("day_exercises")
@@ -196,13 +253,12 @@ export default function CoachBlockDetailPage() {
           training_day_id: days[currentDayIndex].id,
           exercise_id: exerciseData.id,
           target_sets: validSets.length,
-          order_index: exercises.length,
+          order_index: exercisesByDay[days[currentDayIndex].id]?.length || 0,
         })
         .select()
         .single()
 
       if (dayExError) throw dayExError
-      console.log("[v0] Day exercise created:", dayExData)
 
       const setsToInsert = validSets.map((set, index) => ({
         day_exercise_id: dayExData.id,
@@ -210,38 +266,43 @@ export default function CoachBlockDetailPage() {
         target_reps: Number.parseInt(set.reps),
         target_weight: set.weight ? Number.parseFloat(set.weight) : null,
         target_rpe: set.rpe ? Number.parseFloat(set.rpe) : null,
+        target_percentage: set.target_percentage ? Number.parseFloat(set.target_percentage) : null,
       }))
 
-      console.log("[v0] Inserting sets:", setsToInsert)
-
-      const { data: setsData, error: setsError } = await supabase.from("exercise_sets").insert(setsToInsert).select()
+      const { error: setsError } = await supabase.from("exercise_sets").insert(setsToInsert)
 
       if (setsError) throw setsError
-      console.log("[v0] Sets created:", setsData)
 
-      setNewExercise({ name: "" })
-      setNewSets([{ reps: "", weight: "", rpe: "" }])
-      setShowAddExercise(false)
-      loadDayExercises(days[currentDayIndex].id)
+      setNewExercise({ name: "", sets: [{ reps: "", weight: "", rpe: "", target_percentage: "" }] })
+      setShowAddExerciseForm(false)
+      await loadAllExercises([days[currentDayIndex].id])
     } catch (err: any) {
       console.error("[v0] Error adding exercise:", err)
       alert("Error: " + err.message)
+    } finally {
+      setSaving(false)
     }
   }
 
   function addNewSet() {
-    setNewSets([...newSets, { reps: "", weight: "", rpe: "" }])
+    setNewExercise({
+      ...newExercise,
+      sets: [...newExercise.sets, { reps: "", weight: "", rpe: "", target_percentage: "" }],
+    })
   }
 
   function updateNewSet(index: number, field: keyof NewSet, value: string) {
-    const updated = [...newSets]
-    updated[index][field] = value
-    setNewSets(updated)
+    const updatedSets = [...newExercise.sets]
+    updatedSets[index][field] = value
+    setNewExercise({ ...newExercise, sets: updatedSets })
   }
 
   function removeNewSet(index: number) {
-    if (newSets.length > 1) {
-      setNewSets(newSets.filter((_, i) => i !== index))
+    if (newExercise.sets.length > 1) {
+      setNewExercise({
+        ...newExercise,
+        sets: newExercise.sets.filter((_, i) => i !== index),
+      })
     }
   }
 
@@ -257,127 +318,428 @@ export default function CoachBlockDetailPage() {
     if (!confirm("¿Estás seguro de que quieres eliminar este ejercicio?")) return
 
     try {
-      const supabase = createBrowserClient()
-
       const { error } = await supabase.from("day_exercises").delete().eq("id", exerciseId)
 
       if (error) throw error
 
-      loadDayExercises(days[currentDayIndex].id)
+      await loadAllExercises([days[currentDayIndex].id])
     } catch (err: any) {
       console.error("[v0] Error deleting exercise:", err)
       alert("Error al eliminar ejercicio: " + err.message)
     }
   }
 
-  if (loading) {
-    return (
-      <AuthGuard requiredRole="coach">
-        <div className="flex min-h-screen items-center justify-center bg-muted">
-          <p className="text-muted-foreground">Cargando...</p>
-        </div>
-      </AuthGuard>
-    )
+  async function handleSaveDates() {
+    setSaving(true)
+    try {
+      for (const day of days) {
+        const newDate = editingDates[day.id]
+        if (newDate) {
+          const { error } = await supabase.from("training_days").update({ scheduled_date: newDate }).eq("id", day.id)
+
+          if (error) throw error
+        }
+      }
+
+      alert("Fechas actualizadas correctamente")
+      setShowDateEditor(false)
+      await loadBlockData()
+    } catch (err: any) {
+      console.error("[v0] Error saving dates:", err)
+      alert("Error al guardar fechas: " + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const editingDates = days.reduce(
+    (acc, day) => {
+      acc[day.id] = day.scheduled_date || ""
+      return acc
+    },
+    {} as Record<string, string>,
+  )
+
+  function updateEditingDate(dayId: string, date: string) {
+    setDays(days.map((day) => (day.id === dayId ? { ...day, scheduled_date: date } : day)))
+  }
+
+  const addWeek = async () => {
+    if (!block) return
+
+    try {
+      setSaving(true)
+
+      const maxWeek = Math.max(...weekNumbers, 0)
+      const newWeekNumber = maxWeek + 1
+      const lastWeekDays = daysByWeek[maxWeek] || []
+
+      if (lastWeekDays.length === 0) {
+        alert("No hay días en la última semana para duplicar")
+        setSaving(false)
+        return
+      }
+
+      // Get all exercises from last week
+      const lastWeekDayIds = lastWeekDays.map((d) => d.id)
+      const { data: allOldExercises, error: exercisesError } = await supabase
+        .from("day_exercises")
+        .select("*, exercise_sets(*)")
+        .in("training_day_id", lastWeekDayIds)
+        .order("order_index")
+
+      if (exercisesError) throw exercisesError
+
+      // Create new days
+      const newDaysToInsert = lastWeekDays.map((oldDay) => {
+        const oldDate = new Date(oldDay.scheduled_date)
+        const newDate = new Date(oldDate)
+        newDate.setDate(newDate.getDate() + 7)
+
+        return {
+          block_id: block.id,
+          name: oldDay.name,
+          week_number: newWeekNumber,
+          day_number: oldDay.day_number,
+          scheduled_date: newDate.toISOString().split("T")[0],
+        }
+      })
+
+      const { data: newDays, error: daysError } = await supabase.from("training_days").insert(newDaysToInsert).select()
+
+      if (daysError) throw daysError
+
+      const { error: updateBlockError } = await supabase
+        .from("training_blocks")
+        .update({ total_weeks: newWeekNumber })
+        .eq("id", block.id)
+
+      if (updateBlockError) throw updateBlockError
+
+      // Map old day IDs to new day IDs
+      const dayIdMap = new Map<string, string>()
+      lastWeekDays.forEach((oldDay, index) => {
+        dayIdMap.set(oldDay.id, newDays[index].id)
+      })
+
+      // Create exercises
+      if (allOldExercises && allOldExercises.length > 0) {
+        const newExercisesToInsert = allOldExercises.map((oldExercise) => ({
+          training_day_id: dayIdMap.get(oldExercise.training_day_id)!,
+          exercise_id: oldExercise.exercise_id,
+          order_index: oldExercise.order_index,
+          target_sets: oldExercise.target_sets,
+          target_reps: oldExercise.target_reps,
+          target_rpe: oldExercise.target_rpe,
+          target_weight: oldExercise.target_weight,
+          notes: oldExercise.notes,
+        }))
+
+        const { data: newExercises, error: newExercisesError } = await supabase
+          .from("day_exercises")
+          .insert(newExercisesToInsert)
+          .select()
+
+        if (newExercisesError) throw newExercisesError
+
+        // Map old exercise IDs to new exercise IDs
+        const exerciseIdMap = new Map<string, string>()
+        allOldExercises.forEach((oldEx, index) => {
+          exerciseIdMap.set(oldEx.id, newExercises[index].id)
+        })
+
+        // Create sets
+        const newSetsToInsert: any[] = []
+        allOldExercises.forEach((oldExercise) => {
+          if (oldExercise.exercise_sets && oldExercise.exercise_sets.length > 0) {
+            const newExerciseId = exerciseIdMap.get(oldExercise.id)
+            if (newExerciseId) {
+              oldExercise.exercise_sets.forEach((set: any) => {
+                newSetsToInsert.push({
+                  day_exercise_id: newExerciseId,
+                  set_number: set.set_number,
+                  target_reps: set.target_reps,
+                  target_weight: set.target_weight,
+                  target_rpe: set.target_rpe,
+                  target_percentage: set.target_percentage,
+                })
+              })
+            }
+          }
+        })
+
+        if (newSetsToInsert.length > 0) {
+          const { error: setsError } = await supabase.from("exercise_sets").insert(newSetsToInsert)
+          if (setsError) throw setsError
+        }
+      }
+
+      // Reload all data
+      await loadBlockData()
+      alert(`Semana ${newWeekNumber} creada exitosamente`)
+    } catch (error: any) {
+      console.error("[v0] Error adding week:", error)
+      alert(`Error al agregar semana: ${error.message}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const currentDay = days[currentDayIndex]
+  const exercises = currentDay ? exercisesByDay[currentDay.id] || [] : []
+
+  const handleEditExercise = (exercise: Exercise) => {
+    setEditingExerciseId(exercise.id)
+    setEditingExercise({
+      name: exercise.exercise_name,
+      sets: exercise.sets.map((set) => ({
+        id: set.id,
+        set_number: set.set_number,
+        reps: set.target_reps,
+        weight: set.target_weight,
+        rpe: set.target_rpe,
+      })),
+    })
+  }
+
+  const handleSaveEditedExercise = async () => {
+    if (!editingExerciseId || !editingExercise) return
+
+    setSaving(true)
+    try {
+      const updates = editingExercise.sets.map((set) => ({
+        id: set.id,
+        reps: set.reps,
+        weight: set.weight,
+        rpe: set.rpe,
+      }))
+
+      await updateExerciseSets(updates)
+
+      // Update local state
+      setExercisesByDay((prev) => {
+        const newState = { ...prev }
+        const dayExercises = newState[currentDay?.id || ""]
+        if (dayExercises) {
+          const exerciseIndex = dayExercises.findIndex((ex) => ex.id === editingExerciseId)
+          if (exerciseIndex !== -1) {
+            dayExercises[exerciseIndex] = {
+              ...dayExercises[exerciseIndex],
+              sets: dayExercises[exerciseIndex].sets.map((existingSet) => {
+                const editedSet = editingExercise.sets.find((s) => s.id === existingSet.id)
+                if (editedSet) {
+                  return {
+                    ...existingSet,
+                    target_reps: editedSet.reps,
+                    target_weight: editedSet.weight,
+                    target_rpe: editedSet.rpe,
+                  }
+                }
+                return existingSet
+              }),
+            }
+          }
+        }
+        return newState
+      })
+
+      setEditingExerciseId(null)
+      setEditingExercise(null)
+      alert("Ejercicio actualizado exitosamente")
+    } catch (error) {
+      console.error("[v0] Error updating exercise:", error)
+      alert("Error al actualizar ejercicio. Por favor intenta de nuevo.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditingExerciseId(null)
+    setEditingExercise(null)
+  }
+
+  const updateEditingSet = (index: number, field: "reps" | "weight" | "rpe", value: string) => {
+    if (!editingExercise) return
+
+    const newSets = [...editingExercise.sets]
+    if (field === "reps") {
+      newSets[index].reps = Number.parseInt(value) || 0
+    } else if (field === "weight") {
+      newSets[index].weight = value ? Number.parseFloat(value) : null
+    } else if (field === "rpe") {
+      newSets[index].rpe = value ? Number.parseFloat(value) : null
+    }
+
+    setEditingExercise({ ...editingExercise, sets: newSets })
+  }
+
+  if (!block && blockId !== "new") {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4" />
+          <p className="text-muted-foreground">Cargando bloque...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <AuthGuard requiredRole="coach">
-      <div className="min-h-screen bg-muted px-4 py-6">
-        <div className="mb-6 flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push("/coach")} className="text-teal-500">
-            <ChevronLeft className="h-5 w-5" />
+    <div className="container mx-auto p-4 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => router.push("/coach")}>
+            <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div className="flex-1">
-            <h1 className="text-xl font-bold text-foreground">{block?.name}</h1>
-            <p className="text-sm text-muted-foreground">Atleta: {block?.athlete_name}</p>
+          <div>
+            <h1 className="text-2xl font-bold">{block?.name || "Bloque sin nombre"}</h1>
+            <p className="text-sm text-muted-foreground">
+              {block?.total_weeks || weekNumbers.length}{" "}
+              {block?.total_weeks || weekNumbers.length === 1 ? "semana" : "semanas"} • {days.length}{" "}
+              {days.length === 1 ? "día" : "días"}
+            </p>
           </div>
         </div>
+        <Button onClick={addWeek} variant="outline" className="gap-2 bg-transparent">
+          <Copy className="h-4 w-4" />
+          Agregar Semana {Math.max(...weekNumbers, 0) + 1}
+        </Button>
+      </div>
 
-        {days.length > 0 && (
-          <div className="mb-6 flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigateDay("prev")}
-              disabled={currentDayIndex === 0}
-              className="text-teal-500"
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
+      <Card className="p-4">
+        <Accordion type="single" collapsible value={openWeek} onValueChange={setOpenWeek}>
+          {weekNumbers.map((weekNum) => (
+            <AccordionItem key={`week-${weekNum}`} value={`week-${weekNum}`}>
+              <AccordionTrigger className="text-lg font-semibold">
+                Semana {weekNum} ({daysByWeek[weekNum].length} {daysByWeek[weekNum].length === 1 ? "día" : "días"})
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {daysByWeek[weekNum].map((day) => {
+                    const dayIndex = days.findIndex((d) => d.id === day.id)
+                    return (
+                      <Button
+                        key={day.id}
+                        variant={dayIndex === currentDayIndex ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setCurrentDayIndex(dayIndex)}
+                        className={dayIndex === currentDayIndex ? "bg-teal-500 hover:bg-teal-600" : ""}
+                      >
+                        {day?.name || `Día ${day?.day_number}`}
+                      </Button>
+                    )
+                  })}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </Card>
 
-            <div className="flex flex-1 gap-2 overflow-x-auto">
-              {days.map((day, index) => (
-                <Button
-                  key={day.id}
-                  variant={index === currentDayIndex ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setCurrentDayIndex(index)}
-                  className={index === currentDayIndex ? "bg-teal-500 hover:bg-teal-600" : ""}
-                >
-                  {day.name}
-                </Button>
-              ))}
-            </div>
+      {/* Current Day Content */}
+      {currentDay && !blockId.includes("new") && (
+        <Card className="bg-white">
+          <CardHeader>
+            <CardTitle className="text-xl">{currentDay.name || `Día ${currentDay.day_number}`}</CardTitle>
+          </CardHeader>
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigateDay("next")}
-              disabled={currentDayIndex === days.length - 1}
-              className="text-teal-500"
-            >
-              <ChevronRight className="h-5 w-5" />
-            </Button>
-          </div>
-        )}
-
-        {currentDay && <h2 className="mb-6 text-2xl font-bold text-foreground">{currentDay.name}</h2>}
-
-        <div className="mb-6 space-y-4">
-          {exercises.length === 0 ? (
-            <Card className="bg-white">
-              <CardContent className="py-12 text-center">
-                <p className="mb-4 text-muted-foreground">No hay ejercicios en este día</p>
-              </CardContent>
-            </Card>
+          {loading ? (
+            <CardContent>
+              <p className="text-center text-muted-foreground">Cargando ejercicios...</p>
+            </CardContent>
           ) : (
             exercises.map((exercise) => (
               <Card key={exercise.id} className="bg-white border-0 shadow-sm">
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="text-lg font-semibold text-foreground">{exercise.exercise_name}</h3>
-                      <p className="text-sm text-muted-foreground">{exercise.sets.length} series</p>
+                  {editingExerciseId === exercise.id ? (
+                    // Edit mode
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-lg font-semibold text-foreground">{editingExercise?.name}</h3>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-[auto_1fr_1fr_1fr] gap-2 text-center text-xs font-medium text-muted-foreground mb-2">
+                          <div className="w-16">SET</div>
+                          <div>PESO (kg)</div>
+                          <div>REPS</div>
+                          <div>RPE</div>
+                        </div>
+                        {editingExercise?.sets.map((set, index) => (
+                          <div key={set.id} className="grid grid-cols-[auto_1fr_1fr_1fr] gap-2">
+                            <div className="w-16 bg-gray-100 rounded-lg p-2 text-center text-sm font-medium flex items-center justify-center">
+                              {index + 1}
+                            </div>
+                            <Input
+                              type="number"
+                              step="0.5"
+                              placeholder="-"
+                              value={set.weight || ""}
+                              onChange={(e) => updateEditingSet(index, "weight", e.target.value)}
+                              className="text-center"
+                            />
+                            <Input
+                              type="number"
+                              placeholder="0"
+                              value={set.reps}
+                              onChange={(e) => updateEditingSet(index, "reps", e.target.value)}
+                              className="text-center"
+                            />
+                            <Input
+                              type="number"
+                              step="0.5"
+                              placeholder="-"
+                              value={set.rpe || ""}
+                              onChange={(e) => updateEditingSet(index, "rpe", e.target.value)}
+                              className="text-center"
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={handleSaveEditedExercise}
+                          disabled={saving}
+                          className="flex-1 bg-teal-500 hover:bg-teal-600"
+                        >
+                          {saving ? "Guardando..." : "Guardar Cambios"}
+                        </Button>
+                        <Button variant="outline" disabled={saving} onClick={handleCancelEdit}>
+                          Cancelar
+                        </Button>
+                      </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDeleteExercise(exercise.id)}
-                      className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                  ) : (
+                    // View mode
+                    <>
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h3 className="text-lg font-semibold text-foreground">{exercise.exercise_name}</h3>
+                          <p className="text-sm text-muted-foreground">{exercise.sets.length} series</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEditExercise(exercise)}
+                            className="text-blue-500 hover:text-blue-600 hover:bg-blue-50"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteExercise(exercise.id)}
+                            className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
 
-                  <Tabs defaultValue="target" className="w-full">
-                    <TabsList className="grid w-full grid-cols-2 bg-transparent">
-                      <TabsTrigger
-                        value="target"
-                        className="data-[state=active]:bg-transparent data-[state=active]:text-teal-500 data-[state=active]:border-b-2 data-[state=active]:border-teal-500 rounded-none"
-                      >
-                        TARGET
-                      </TabsTrigger>
-                      <TabsTrigger
-                        value="actual"
-                        className="data-[state=active]:bg-transparent data-[state=active]:text-teal-500 data-[state=active]:border-b-2 data-[state=active]:border-teal-500 rounded-none"
-                      >
-                        PROGRESO
-                      </TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="target" className="mt-4">
                       {exercise.sets.length === 0 ? (
                         <p className="text-center text-sm text-muted-foreground py-4">No hay series definidas</p>
                       ) : (
@@ -406,121 +768,115 @@ export default function CoachBlockDetailPage() {
                           ))}
                         </div>
                       )}
-                    </TabsContent>
-
-                    <TabsContent value="actual" className="mt-4">
-                      <div className="text-center">
-                        <p className="text-sm text-muted-foreground">
-                          El atleta ha completado{" "}
-                          <span className="font-medium text-teal-500">{exercise.actual_sets}</span> de{" "}
-                          <span className="font-medium">{exercise.sets.length}</span> sets
-                        </p>
-                      </div>
-                    </TabsContent>
-                  </Tabs>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             ))
           )}
-        </div>
+        </Card>
+      )}
 
-        {showAddExercise ? (
-          <Card className="bg-white">
-            <CardContent className="p-4">
-              <h3 className="mb-4 font-medium">Agregar Ejercicio</h3>
-              <div className="space-y-4">
-                <Input
-                  placeholder="Nombre del ejercicio"
-                  value={newExercise.name}
-                  onChange={(e) => setNewExercise({ ...newExercise, name: e.target.value })}
-                />
+      {showAddExerciseForm ? (
+        <Card className="bg-white">
+          <CardContent className="p-4">
+            <h3 className="mb-4 font-medium">Agregar Ejercicio</h3>
+            <div className="space-y-4">
+              <Input
+                placeholder="Nombre del ejercicio"
+                value={newExercise.name}
+                onChange={(e) => setNewExercise({ ...newExercise, name: e.target.value })}
+              />
 
-                <div>
-                  <p className="text-sm font-medium mb-2">Series</p>
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-[auto_1fr_1fr_1fr_auto] gap-2 text-center text-xs font-medium text-muted-foreground mb-2">
-                      <div className="w-12">SET</div>
-                      <div>PESO (kg)</div>
-                      <div>REPS</div>
-                      <div>RPE</div>
-                      <div className="w-10"></div>
-                    </div>
-                    {newSets.map((set, index) => (
-                      <div key={index} className="grid grid-cols-[auto_1fr_1fr_1fr_auto] gap-2">
-                        <div className="w-12 bg-gray-100 rounded-lg p-2 text-center text-sm font-medium flex items-center justify-center">
-                          {index + 1}
-                        </div>
-                        <Input
-                          type="number"
-                          step="0.5"
-                          placeholder="-"
-                          value={set.weight}
-                          onChange={(e) => updateNewSet(index, "weight", e.target.value)}
-                          className="text-center"
-                        />
-                        <Input
-                          type="number"
-                          placeholder="0"
-                          value={set.reps}
-                          onChange={(e) => updateNewSet(index, "reps", e.target.value)}
-                          className="text-center"
-                        />
-                        <Input
-                          type="number"
-                          step="0.5"
-                          placeholder="-"
-                          value={set.rpe}
-                          onChange={(e) => updateNewSet(index, "rpe", e.target.value)}
-                          className="text-center"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeNewSet(index)}
-                          disabled={newSets.length === 1}
-                          className="w-10 h-10"
-                        >
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
-                      </div>
-                    ))}
+              <div>
+                <Label className="text-sm font-medium mb-2">Series</Label>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[auto_1fr_1fr_1fr_auto] gap-2 text-center text-xs font-medium text-muted-foreground mb-2">
+                    <div className="w-12">SET</div>
+                    <div>PESO (kg)</div>
+                    <div>REPS</div>
+                    <div>RPE</div>
+                    <div className="w-10"></div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={addNewSet}
-                    className="w-full mt-2 text-teal-500 border-teal-500 bg-transparent"
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    Agregar Serie
-                  </Button>
+                  {newExercise.sets.map((set, index) => (
+                    <div key={index} className="grid grid-cols-[auto_1fr_1fr_1fr_auto] gap-2">
+                      <div className="w-12 bg-gray-100 rounded-lg p-2 text-center text-sm font-medium flex items-center justify-center">
+                        {index + 1}
+                      </div>
+                      <Input
+                        type="number"
+                        step="0.5"
+                        placeholder="-"
+                        value={set.weight}
+                        onChange={(e) => updateNewSet(index, "weight", e.target.value)}
+                        className="text-center"
+                      />
+                      <Input
+                        type="number"
+                        placeholder="0"
+                        value={set.reps}
+                        onChange={(e) => updateNewSet(index, "reps", e.target.value)}
+                        className="text-center"
+                      />
+                      <Input
+                        type="number"
+                        step="0.5"
+                        placeholder="-"
+                        value={set.rpe}
+                        onChange={(e) => updateNewSet(index, "rpe", e.target.value)}
+                        className="text-center"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeNewSet(index)}
+                        disabled={newExercise.sets.length === 1}
+                        className="w-10 h-10"
+                      >
+                        <Trash2 className="h-4 w-4 text-red-500" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-
-                <div className="flex gap-2">
-                  <Button onClick={handleAddExercise} className="flex-1 bg-teal-500 hover:bg-teal-600">
-                    Agregar Ejercicio
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setShowAddExercise(false)
-                      setNewExercise({ name: "" })
-                      setNewSets([{ reps: "", weight: "", rpe: "" }])
-                    }}
-                  >
-                    Cancelar
-                  </Button>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={addNewSet}
+                  className="w-full mt-2 text-teal-500 border-teal-500 bg-transparent"
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Agregar Serie
+                </Button>
               </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <Button onClick={() => setShowAddExercise(true)} className="w-full bg-teal-500 hover:bg-teal-600 h-12">
-            <Plus className="mr-2 h-5 w-5" />
-            Agregar Ejercicio
-          </Button>
-        )}
-      </div>
-    </AuthGuard>
+
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleAddExercise}
+                  disabled={saving || !newExercise.name.trim()}
+                  className="flex-1 bg-teal-500 hover:bg-teal-600"
+                >
+                  {saving ? "Agregando..." : "Agregar Ejercicio"}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={saving}
+                  onClick={() => {
+                    setShowAddExerciseForm(false)
+                    setNewExercise({ name: "", sets: [{ reps: "", weight: "", rpe: "", target_percentage: "" }] })
+                  }}
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Button onClick={() => setShowAddExerciseForm(true)} className="w-full bg-teal-500 hover:bg-teal-600 h-12">
+          <Plus className="mr-2 h-5 w-5" />
+          Agregar Ejercicio
+        </Button>
+      )}
+    </div>
   )
 }

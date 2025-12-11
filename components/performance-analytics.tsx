@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createClient } from "@/lib/supabase/client"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts"
 import { TrendingUp, Zap, Flame, Brain } from "lucide-react"
+import { CollapsibleInfoCard } from "@/components/collapsible-info-card"
 
 interface PerformanceAnalyticsProps {
   coachId: string
@@ -180,6 +181,27 @@ export function PerformanceAnalytics({ coachId }: PerformanceAnalyticsProps) {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
+          <CollapsibleInfoCard title="Métricas de Rendimiento" storageKey="coach-performance-metrics-info">
+            <div className="space-y-2">
+              <p>
+                <span className="font-medium">1RM Estimado:</span> Máximo de 1 repetición calculado con fórmula de
+                Brzycki: Peso × (36 / (37 - Reps))
+              </p>
+              <p>
+                <span className="font-medium">Tonelaje:</span> Volumen total de trabajo = Peso × Reps × Sets. Mide el
+                trabajo total realizado.
+              </p>
+              <p>
+                <span className="font-medium">Stress Index:</span> Indicador de intensidad del entrenamiento basado en
+                %1RM y proximidad al fallo. Escala 0-10, óptimo entre 6-8.
+              </p>
+              <p>
+                <span className="font-medium">NL (Number of Lifts):</span> Cantidad total de levantamientos por
+                ejercicio para medir frecuencia de práctica.
+              </p>
+            </div>
+          </CollapsibleInfoCard>
+
           {/* Key Metrics with gradient backgrounds */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* 1RM Card - Blue gradient */}

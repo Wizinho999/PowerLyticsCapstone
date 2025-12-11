@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
-import { ChevronLeft, Plus, Trash2, Edit2 } from "lucide-react"
+import { ChevronLeft, Plus, Trash2, Edit2, Calendar } from "lucide-react"
 
 interface Athlete {
   id: string
@@ -21,6 +21,7 @@ interface TrainingDay {
   id: string
   name: string
   day_number: number
+  scheduled_date: string
 }
 
 export function CoachBlockCreator() {
@@ -84,10 +85,26 @@ export function CoachBlockCreator() {
   }
 
   const addDay = () => {
+    let defaultDate = ""
+    if (days.length > 0 && days[days.length - 1].scheduled_date) {
+      const lastDate = new Date(days[days.length - 1].scheduled_date)
+      lastDate.setDate(lastDate.getDate() + 1)
+      defaultDate = lastDate.toISOString().split("T")[0]
+    } else if (startDate) {
+      const start = new Date(startDate)
+      start.setDate(start.getDate() + days.length)
+      defaultDate = start.toISOString().split("T")[0]
+    } else {
+      const today = new Date()
+      today.setDate(today.getDate() + days.length)
+      defaultDate = today.toISOString().split("T")[0]
+    }
+
     const newDay: TrainingDay = {
       id: `temp-${Date.now()}`,
       name: `Día ${days.length + 1}`,
       day_number: days.length + 1,
+      scheduled_date: defaultDate,
     }
     setDays([...days, newDay])
   }
@@ -114,6 +131,10 @@ export function CoachBlockCreator() {
     setEditingDayName("")
   }
 
+  const updateDayDate = (dayId: string, date: string) => {
+    setDays(days.map((d) => (d.id === dayId ? { ...d, scheduled_date: date } : d)))
+  }
+
   const createBlock = async () => {
     if (!selectedAthleteId) {
       setError("Por favor selecciona un atleta")
@@ -127,6 +148,12 @@ export function CoachBlockCreator() {
 
     if (days.length === 0) {
       setError("Por favor agrega al menos un día de entrenamiento")
+      return
+    }
+
+    const daysWithoutDates = days.filter((d) => !d.scheduled_date)
+    if (daysWithoutDates.length > 0) {
+      setError("Por favor asigna una fecha a todos los días de entrenamiento")
       return
     }
 
@@ -169,7 +196,8 @@ export function CoachBlockCreator() {
         block_id: blockData.id,
         name: day.name,
         day_number: index + 1,
-        week_number: 1, // Default to week 1 for now
+        week_number: 1,
+        scheduled_date: day.scheduled_date,
       }))
 
       const { error: daysError } = await supabase.from("training_days").insert(daysToInsert)
@@ -284,11 +312,11 @@ export function CoachBlockCreator() {
               No hay días agregados. Haz clic en &quot;Agregar Día&quot; para comenzar.
             </p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {days.map((day) => (
-                <div key={day.id} className="flex items-center gap-2 rounded-lg border bg-card p-3">
+                <div key={day.id} className="rounded-lg border bg-card p-3 space-y-2">
                   {editingDayId === day.id ? (
-                    <>
+                    <div className="flex items-center gap-2">
                       <Input
                         value={editingDayName}
                         onChange={(e) => setEditingDayName(e.target.value)}
@@ -305,21 +333,32 @@ export function CoachBlockCreator() {
                       <Button variant="ghost" size="sm" onClick={cancelEditingDay}>
                         Cancelar
                       </Button>
-                    </>
+                    </div>
                   ) : (
                     <>
-                      <span className="flex-1 font-medium">{day.name}</span>
-                      <Button variant="ghost" size="icon" onClick={() => startEditingDay(day)} className="h-8 w-8">
-                        <Edit2 className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => removeDay(day.id)}
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <span className="flex-1 font-medium">{day.name}</span>
+                        <Button variant="ghost" size="icon" onClick={() => startEditingDay(day)} className="h-8 w-8">
+                          <Edit2 className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeDay(day.id)}
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <Input
+                          type="date"
+                          value={day.scheduled_date}
+                          onChange={(e) => updateDayDate(day.id, e.target.value)}
+                          className="flex-1 text-sm"
+                        />
+                      </div>
                     </>
                   )}
                 </div>
@@ -327,7 +366,8 @@ export function CoachBlockCreator() {
             </div>
           )}
           <p className="mt-4 text-xs text-muted-foreground">
-            Nota: Después de crear el bloque, podrás agregar ejercicios a cada día desde la vista de detalle del bloque.
+            Asigna una fecha a cada día de entrenamiento. Los ejercicios se mostrarán en el calendario del atleta en
+            estas fechas.
           </p>
         </Card>
 

@@ -190,6 +190,8 @@ export default function ExerciseDetailPage() {
       if (error) throw error
 
       setActualLogs((prev) => prev.map((log) => (log.id === logId ? { ...log, [field]: numValue } : log)))
+
+      calculateStats()
     } catch (error: any) {
       console.error("Error updating log:", error.message)
     }
@@ -253,23 +255,28 @@ export default function ExerciseDetailPage() {
 
       const nextSetNumber = actualLogs.length + newSets.filter((_, i) => i < index).length + 1
 
-      const { error } = await supabase.from("exercise_logs").insert({
-        athlete_id: user.user.id,
-        day_exercise_id: dayExerciseId,
-        set_number: nextSetNumber,
-        actual_weight: Number.parseFloat(set.weight),
-        actual_reps: Number.parseInt(set.reps),
-        actual_rpe: set.rpe ? Number.parseFloat(set.rpe) : null,
-      })
+      const { data: newLog, error } = await supabase
+        .from("exercise_logs")
+        .insert({
+          athlete_id: user.user.id,
+          day_exercise_id: dayExerciseId,
+          set_number: nextSetNumber,
+          actual_weight: Number.parseFloat(set.weight),
+          actual_reps: Number.parseInt(set.reps),
+          actual_rpe: set.rpe ? Number.parseFloat(set.rpe) : null,
+        })
+        .select()
+        .single()
 
       if (error) throw error
+
+      if (newLog) {
+        setActualLogs((prev) => [...prev, newLog])
+      }
 
       // Remove the saved set from newSets
       const updated = newSets.filter((_, i) => i !== index)
       setNewSets(updated)
-
-      // Reload to get the saved log
-      await loadExerciseData()
     } catch (error: any) {
       console.error("Error saving set:", error.message)
       alert("Error saving set: " + error.message)

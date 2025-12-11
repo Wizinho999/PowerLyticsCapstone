@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,8 +8,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal, Download, Plus, Calendar, FileText } from "lucide-react"
 import { BottomNavigation } from "@/components/bottom-navigation"
+import { TrainingBlockSkeleton } from "@/components/training-block-skeleton"
 import { useRouter } from "next/navigation"
 import { createBrowserClient } from "@/lib/supabase/client"
+import useSWR from "swr"
 
 interface TrainingBlock {
   id: string
@@ -22,28 +24,22 @@ interface TrainingBlock {
 export function TrainingBlocks() {
   const router = useRouter()
   const supabase = createBrowserClient()
-  const [blocks, setBlocks] = useState<TrainingBlock[]>([])
-  const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newBlockName, setNewBlockName] = useState("")
   const [creating, setCreating] = useState(false)
 
-  useEffect(() => {
-    loadBlocks()
-  }, [])
-
-  const loadBlocks = async () => {
-    try {
-      console.log("[v0] Loading blocks...")
+  const {
+    data: blocks,
+    error,
+    isLoading,
+    mutate,
+  } = useSWR<TrainingBlock[]>(
+    "athlete-blocks",
+    async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser()
-      if (!user) {
-        console.log("[v0] No user found")
-        return
-      }
-
-      console.log("[v0] User ID:", user.id)
+      if (!user) return []
 
       const { data, error } = await supabase
         .from("athlete_blocks")
@@ -60,16 +56,11 @@ export function TrainingBlocks() {
         .eq("athlete_id", user.id)
         .order("created_at", { ascending: false })
 
-      if (error) {
-        console.error("[v0] Error loading blocks:", error)
-        throw error
-      }
+      if (error) throw error
 
-      console.log("[v0] Raw data:", data)
-
-      const formattedBlocks =
+      return (
         data
-          ?.filter((item: any) => item.block !== null) // Filter out null blocks
+          ?.filter((item: any) => item.block !== null)
           .map((item: any) => ({
             id: item.block.id,
             name: item.block.name,
@@ -77,15 +68,13 @@ export function TrainingBlocks() {
             total_weeks: item.block.total_weeks,
             status: item.block.status,
           })) || []
-
-      console.log("[v0] Formatted blocks:", formattedBlocks)
-      setBlocks(formattedBlocks)
-    } catch (error) {
-      console.error("[v0] Error loading blocks:", error)
-    } finally {
-      setLoading(false)
-    }
-  }
+      )
+    },
+    {
+      revalidateOnMount: true,
+      dedupingInterval: 2000,
+    },
+  )
 
   const createBlock = async () => {
     if (!newBlockName.trim()) return
@@ -104,7 +93,6 @@ export function TrainingBlocks() {
         .single()
 
       if (athleteCheckError || !athleteData) {
-        console.log("[v0] Creating athlete record...")
         const { error: athleteCreateError } = await supabase.from("athletes").insert({ id: user.id }).select().single()
 
         if (athleteCreateError) {
@@ -143,7 +131,7 @@ export function TrainingBlocks() {
 
       setNewBlockName("")
       setShowCreateDialog(false)
-      loadBlocks()
+      mutate()
     } catch (error) {
       console.error("[v0] Error creating block:", error)
       alert("Error al crear el bloque. Por favor intenta de nuevo.")
@@ -152,10 +140,51 @@ export function TrainingBlocks() {
     }
   }
 
-  if (loading) {
+  const deleteBlock = async (blockId: string) => {
+    if (!confirm("¿Estás seguro de que quieres eliminar este bloque? Esta acción no se puede deshacer.")) {
+      return
+    }
+
+    try {
+      const { error } = await supabase.from("training_blocks").delete().eq("id", blockId)
+
+      if (error) throw error
+
+      mutate()
+    } catch (error) {
+      console.error("[v0] Error deleting block:", error)
+      alert("Error al eliminar el bloque. Por favor intenta de nuevo.")
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-muted px-4 py-6 pb-20">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-3xl font-bold text-foreground">Blocks</h1>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="icon" className="text-teal-500">
+              <Download className="h-5 w-5" />
+            </Button>
+            <Button variant="ghost" size="icon" className="text-teal-500">
+              <Plus className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-3">
+          <TrainingBlockSkeleton />
+          <TrainingBlockSkeleton />
+          <TrainingBlockSkeleton />
+        </div>
+        <BottomNavigation currentPage="blocks" />
+      </div>
+    )
+  }
+
+  if (error) {
     return (
       <div className="min-h-screen bg-muted flex items-center justify-center">
-        <div className="text-muted-foreground">Cargando bloques...</div>
+        <div className="text-destructive">Error al cargar bloques</div>
       </div>
     )
   }
@@ -177,7 +206,7 @@ export function TrainingBlocks() {
 
       {/* Training blocks list */}
       <div className="space-y-3">
-        {blocks.length === 0 ? (
+        {!blocks || blocks.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground mb-4">No tienes bloques de entrenamiento</p>
             <Button onClick={() => setShowCreateDialog(true)} className="bg-teal-500 hover:bg-teal-600">
@@ -218,7 +247,15 @@ export function TrainingBlocks() {
                       <DropdownMenuItem className="text-foreground">Editar</DropdownMenuItem>
                       <DropdownMenuItem className="text-foreground">Copiar</DropdownMenuItem>
                       <DropdownMenuItem className="text-foreground">Compartir</DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive">Eliminar</DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          deleteBlock(block.id)
+                        }}
+                      >
+                        Eliminar
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from 'next/navigation'
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,16 @@ import { SubscriptionPlans } from "@/components/subscription-plans"
 import { PerformanceAnalytics } from "@/components/performance-analytics"
 import { SimpleBillingManagement } from "@/components/simple-billing-management"
 import { CompetitionPlanning } from "@/components/competition-planning"
+import { Users, Dumbbell, DollarSign, Trophy } from "lucide-react"
+
+interface QuickStat {
+  label: string
+  value: string | number
+  change: string
+  trend: "up" | "down" | "neutral"
+  icon: any
+  color: string
+}
 
 export function CoachDashboard() {
   const [activeSection, setActiveSection] = useState("overview")
@@ -20,6 +30,14 @@ export function CoachDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [subscription, setSubscription] = useState<any>(null)
+  const [quickStats, setQuickStats] = useState<QuickStat[]>([
+    { label: "Atletas Activos", value: 0, change: "+0", trend: "neutral", icon: Users, color: "" },
+    { label: "Bloques Creados", value: 0, change: "+0", trend: "neutral", icon: Dumbbell, color: "" },
+    { label: "Ingresos Mes", value: "$0", change: "+0%", trend: "neutral", icon: DollarSign, color: "" },
+    { label: "Competiciones", value: 0, change: "+0", trend: "neutral", icon: Trophy, color: "" },
+  ])
+  const [recentActivity, setRecentActivity] = useState<any[]>([])
+
   const router = useRouter()
   const supabase = createClient()
 
@@ -103,6 +121,9 @@ export function CoachDashboard() {
           .single()
 
         setSubscription(subData)
+
+        await loadStatistics(user.id)
+
         setLoading(false)
       } catch (err) {
         console.error("Unexpected error:", err)
@@ -113,6 +134,101 @@ export function CoachDashboard() {
 
     getUserData()
   }, [supabase])
+
+  const loadStatistics = async (coachId: string) => {
+    try {
+      const { count: athletesCount } = await supabase
+        .from("athletes")
+        .select("*", { count: "exact", head: true })
+        .eq("coach_id", coachId)
+
+      const { count: blocksCount } = await supabase
+        .from("training_blocks")
+        .select("*", { count: "exact", head: true })
+        .eq("coach_id", coachId)
+
+      const { count: competitionsCount } = await supabase
+        .from("competitions")
+        .select("*", { count: "exact", head: true })
+        .eq("coach_id", coachId)
+
+      const startOfMonth = new Date()
+      startOfMonth.setDate(1)
+      startOfMonth.setHours(0, 0, 0, 0)
+
+      const prevMonth = new Date()
+      prevMonth.setMonth(prevMonth.getMonth() - 1)
+      prevMonth.setDate(1)
+      const prevMonthEnd = new Date(startOfMonth)
+      prevMonthEnd.setDate(0)
+
+      const { count: prevBlocksCount } = await supabase
+        .from("training_blocks")
+        .select("*", { count: "exact", head: true })
+        .eq("coach_id", coachId)
+        .gte("created_at", prevMonth.toISOString())
+        .lt("created_at", startOfMonth.toISOString())
+
+      const summaryResponse = await fetch(`/api/athlete-billing?coachId=${coachId}&type=summary`)
+      let monthIncome = 0
+      let incomeDiff = 0
+
+      if (summaryResponse.ok) {
+        const { summary } = await summaryResponse.json()
+        monthIncome = summary?.monthIncome || 0
+        incomeDiff = summary?.incomeDiff || 0
+      }
+
+      const blocksDiff = (blocksCount || 0) - (prevBlocksCount || 0)
+      const { data: recentBlocks } = await supabase
+        .from("training_blocks")
+        .select("*, profiles!training_blocks_athlete_id_fkey(full_name)")
+        .eq("coach_id", coachId)
+        .order("created_at", { ascending: false })
+        .limit(5)
+
+      setRecentActivity(recentBlocks || [])
+
+      setQuickStats([
+        {
+          label: "Atletas Activos",
+          value: athletesCount || 0,
+          change: athletesCount && athletesCount > 0 ? `${athletesCount} total` : "Sin atletas",
+          trend: "neutral",
+          icon: Users,
+          color: "",
+        },
+        {
+          label: "Bloques Creados",
+          value: blocksCount || 0,
+          change:
+            blocksDiff > 0 ? `+${blocksDiff} este mes` : blocksDiff < 0 ? `${blocksDiff} este mes` : "Sin cambios",
+          trend: blocksDiff > 0 ? "up" : blocksDiff < 0 ? "down" : "neutral",
+          icon: Dumbbell,
+          color: "",
+        },
+        {
+          label: "Ingresos Mes",
+          value: `$${monthIncome.toLocaleString("es-CL")}`,
+          change: incomeDiff !== 0 ? `${incomeDiff > 0 ? "+" : ""}${incomeDiff.toFixed(1)}%` : "Sin cambios",
+          trend: incomeDiff > 0 ? "up" : incomeDiff < 0 ? "down" : "neutral",
+          icon: DollarSign,
+          color: "",
+        },
+        {
+          label: "Competiciones",
+          value: competitionsCount || 0,
+          change:
+            competitionsCount && competitionsCount > 0 ? `${competitionsCount} planificadas` : "Sin competiciones",
+          trend: "neutral",
+          icon: Trophy,
+          color: "",
+        },
+      ])
+    } catch (error) {
+      console.error("Error loading statistics:", error)
+    }
+  }
 
   const handleSelectPlan = async (planId: string) => {
     try {
@@ -164,13 +280,6 @@ export function CoachDashboard() {
     { id: "subscription", label: "Suscripción" },
   ]
 
-  const quickStats = [
-    { label: "Atletas Activos", value: "0", change: "+0" },
-    { label: "Bloques Creados", value: "0", change: "+0" },
-    { label: "Ingresos Mes", value: "$0", change: "+0%" },
-    { label: "Competiciones", value: "0", change: "+0" },
-  ]
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
@@ -210,22 +319,26 @@ export function CoachDashboard() {
               <p className="text-muted-foreground">Aquí tienes un resumen de tu actividad reciente</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {quickStats.map((stat, index) => (
-                <Card key={index} className="bg-white border-0 shadow-sm">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-muted-foreground">{stat.label}</p>
-                        <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {quickStats.map((stat, index) => {
+                const Icon = stat.icon
+                return (
+                  <Card key={index} className="border-l-4 border-l-green-500">
+                    <CardContent className="p-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-2">{stat.label}</p>
+                          <p className="text-3xl font-bold">{stat.value}</p>
+                          {stat.change !== "Sin cambios" && (
+                            <p className="text-sm text-muted-foreground mt-1">{stat.change}</p>
+                          )}
+                        </div>
+                        <Icon className="h-10 w-10 text-green-500" />
                       </div>
-                      <Badge variant="secondary" className="text-xs">
-                        {stat.change}
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                )
+              })}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

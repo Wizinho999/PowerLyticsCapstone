@@ -13,13 +13,68 @@ export async function GET(request: Request) {
 
     const supabase = await createClient()
 
+    if (type === "summary") {
+      const startOfMonth = new Date()
+      startOfMonth.setDate(1)
+      startOfMonth.setHours(0, 0, 0, 0)
+
+      const prevMonthStart = new Date(startOfMonth)
+      prevMonthStart.setMonth(prevMonthStart.getMonth() - 1)
+
+      const toISODate = (date: Date) => date.toISOString().split("T")[0]
+
+      const [monthPaidRes, prevMonthPaidRes, totalPaidRes, pendingRes] = await Promise.all([
+        supabase
+          .from("billing")
+          .select("amount")
+          .eq("coach_id", coachId)
+          .eq("status", "paid")
+          .gte("paid_date", toISODate(startOfMonth)),
+        supabase
+          .from("billing")
+          .select("amount")
+          .eq("coach_id", coachId)
+          .eq("status", "paid")
+          .gte("paid_date", toISODate(prevMonthStart))
+          .lt("paid_date", toISODate(startOfMonth)),
+        supabase.from("billing").select("amount").eq("coach_id", coachId).eq("status", "paid"),
+        supabase
+          .from("billing")
+          .select("amount")
+          .eq("coach_id", coachId)
+          .in("status", ["pending", "overdue"]),
+      ])
+
+      const sumAmounts = (data?: { amount: number }[] | null) =>
+        data?.reduce((sum, bill) => sum + (Number(bill.amount) || 0), 0) || 0
+
+      const monthIncome = sumAmounts(monthPaidRes.data)
+      const prevMonthIncome = sumAmounts(prevMonthPaidRes.data)
+      const totalIncome = sumAmounts(totalPaidRes.data)
+      const pendingAmount = sumAmounts(pendingRes.data)
+
+      const incomeDiff =
+        prevMonthIncome > 0 ? ((monthIncome - prevMonthIncome) / prevMonthIncome) * 100 : monthIncome > 0 ? 100 : 0
+
+      return NextResponse.json({
+        summary: {
+          totalIncome,
+          monthIncome,
+          prevMonthIncome,
+          incomeDiff,
+          pendingAmount,
+        },
+      })
+    }
+
     if (type === "athletes") {
       const { data, error } = await supabase
         .from("athletes")
         .select(`
           id,
-          profiles!inner(
-            full_name
+          profiles(
+            full_name,
+            email
           )
         `)
         .eq("coach_id", coachId)
@@ -29,10 +84,14 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 })
       }
 
-      const athletes = (data || []).map((athlete: any) => ({
-        id: athlete.id,
-        name: athlete.profiles?.full_name || "Sin nombre",
-      }))
+      const athletes = (data || []).map((athlete: any) => {
+        const profile = athlete.profiles || {}
+        const fullName = profile.full_name || profile.email || "Sin nombre"
+        return {
+          id: athlete.id,
+          full_name: fullName,
+        }
+      })
 
       return NextResponse.json({ athletes })
     }
@@ -43,8 +102,9 @@ export async function GET(request: Request) {
         *,
         athletes!inner(
           id,
-          profiles!inner(
-            full_name
+          profiles(
+            full_name,
+            email
           )
         )
       `)
@@ -56,18 +116,23 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
-    const billingRecords = (data || []).map((record: any) => ({
-      id: record.id,
-      athlete_id: record.athlete_id,
-      athlete_name: record.athletes?.profiles?.full_name || "Sin nombre",
-      due_date: record.due_date,
-      amount: record.amount,
-      payment_method: record.payment_method || "monthly",
-      paid_date: record.paid_date,
-      amount_due: record.status === "paid" ? 0 : record.amount,
-      status: record.status,
-      notes: record.notes,
-    }))
+    const billingRecords = (data || []).map((record: any) => {
+      const profile = record.athletes?.profiles || {}
+      const athleteName = profile.full_name || profile.email || "Sin nombre"
+
+      return {
+        id: record.id,
+        athlete_id: record.athlete_id,
+        athlete_name: athleteName,
+        due_date: record.due_date,
+        amount: record.amount,
+        payment_method: record.payment_method || "monthly",
+        paid_date: record.paid_date,
+        amount_due: record.status === "paid" ? 0 : record.amount,
+        status: record.status,
+        notes: record.notes,
+      }
+    })
 
     return NextResponse.json({ billingRecords })
   } catch (error) {

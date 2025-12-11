@@ -11,6 +11,7 @@ import { ChevronLeft, Plus, FileText, MoreHorizontal } from "lucide-react"
 import { BottomNavigation } from "@/components/bottom-navigation"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { createBrowserClient } from "@/lib/supabase/client"
+import { LoadingLogo } from "@/components/loading-logo"
 
 interface TrainingDay {
   id: string
@@ -121,7 +122,7 @@ export default function BlockDetailPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-muted flex items-center justify-center">
-        <div className="text-muted-foreground">Cargando...</div>
+        <LoadingLogo size="lg" />
       </div>
     )
   }

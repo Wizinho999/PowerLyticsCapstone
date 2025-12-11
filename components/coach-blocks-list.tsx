@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
-import { Plus, Calendar, FileText, Users } from "lucide-react"
+import { Plus, Calendar, FileText, Users, Trash2 } from "lucide-react"
+import { CollapsibleInfoCard } from "@/components/collapsible-info-card"
 
 interface Block {
   id: string
@@ -68,6 +69,27 @@ export function CoachBlocksList() {
     }
   }
 
+  const deleteBlock = async (blockId: string) => {
+    if (
+      !confirm(
+        "¿Estás seguro de que quieres eliminar este bloque? Esta acción no se puede deshacer y eliminará todos los días y ejercicios asociados.",
+      )
+    ) {
+      return
+    }
+
+    try {
+      const { error } = await supabase.from("training_blocks").delete().eq("id", blockId)
+
+      if (error) throw error
+
+      loadBlocks()
+    } catch (error) {
+      console.error("[v0] Error deleting block:", error)
+      alert("Error al eliminar el bloque. Por favor intenta de nuevo.")
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -78,9 +100,22 @@ export function CoachBlocksList() {
 
   return (
     <div className="space-y-4">
+      <CollapsibleInfoCard title="Bloques de Entrenamiento" storageKey="coach-blocks-info">
+        <div className="space-y-1">
+          <p>
+            Los <span className="font-medium">bloques de entrenamiento</span> organizan tu programación en ciclos con
+            objetivos específicos (fuerza, hipertrofia, potencia).
+          </p>
+          <p className="text-xs mt-2">
+            <span className="font-medium">Tips:</span> Organiza por semanas, asigna a múltiples atletas, duplica bloques
+            exitosos, y rastrea el progreso de cada atleta.
+          </p>
+        </div>
+      </CollapsibleInfoCard>
+
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-semibold">Bloques de Entrenamiento</h2>
-        <Button onClick={() => router.push("/coach/blocks/create")} className="bg-teal-500 hover:bg-teal-600">
+        <Button onClick={() => router.push("/coach/blocks/new")} className="bg-teal-500 hover:bg-teal-600">
           <Plus className="mr-2 h-4 w-4" />
           Crear Bloque
         </Button>
@@ -89,7 +124,7 @@ export function CoachBlocksList() {
       {blocks.length === 0 ? (
         <Card className="p-12 text-center">
           <p className="mb-4 text-muted-foreground">No has creado ningún bloque de entrenamiento</p>
-          <Button onClick={() => router.push("/coach/blocks/create")} className="bg-teal-500 hover:bg-teal-600">
+          <Button onClick={() => router.push("/coach/blocks/new")} className="bg-teal-500 hover:bg-teal-600">
             Crear tu primer bloque
           </Button>
         </Card>
@@ -102,10 +137,25 @@ export function CoachBlocksList() {
               onClick={() => router.push(`/coach/blocks/${block.id}`)}
             >
               <CardContent className="p-4">
-                <h3 className="mb-2 text-lg font-semibold">{block.name}</h3>
+                <div className="flex items-start justify-between mb-2">
+                  <h3 className="text-lg font-semibold flex-1">{block.name}</h3>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      deleteBlock(block.id)
+                    }}
+                    className="text-red-500 hover:text-red-600 hover:bg-red-50 h-8 w-8 -mt-1 -mr-1"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
                 {block.description && (
                   <p className="mb-3 text-sm text-muted-foreground line-clamp-2">{block.description}</p>
                 )}
+
                 <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <FileText className="h-4 w-4 text-teal-500" />

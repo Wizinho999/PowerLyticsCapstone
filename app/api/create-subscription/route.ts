@@ -2,14 +2,14 @@ import { NextResponse } from "next/server"
 
 export async function POST(request: Request) {
   try {
-    console.log("[v0] [SERVER] Starting subscription creation...")
+    console.log("[SERVER] Starting subscription creation...")
 
     const { planId, userId } = await request.json()
-    console.log("[v0] [SERVER] Plan selected:", planId)
-    console.log("[v0] [SERVER] User ID:", userId)
+    console.log("[SERVER] Plan selected:", planId)
+    console.log("[SERVER] User ID:", userId)
 
     if (!userId) {
-      console.log("[v0] [SERVER] No user ID provided")
+      console.log("[SERVER] No user ID provided")
       return NextResponse.json({ error: "User ID required" }, { status: 400 })
     }
 
@@ -53,18 +53,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid plan" }, { status: 400 })
     }
 
-    console.log("[v0] [SERVER] Selected plan:", selectedPlan.name)
+    console.log("[SERVER] Selected plan:", selectedPlan.name)
 
     const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN
     if (!mpToken) {
-      console.error("[v0] [SERVER] MERCADOPAGO_ACCESS_TOKEN not configured")
+      console.error("[SERVER] MERCADOPAGO_ACCESS_TOKEN not configured")
       return NextResponse.json({ error: "Payment system not configured" }, { status: 500 })
     }
 
-    console.log("[v0] [SERVER] Mercado Pago token found")
+    console.log("[SERVER] Mercado Pago token found")
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"
-    console.log("[v0] [SERVER] Site URL:", siteUrl)
+    console.log("[SERVER] Site URL:", siteUrl)
 
     const preference = {
       items: [
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
       },
     }
 
-    console.log("[v0] [SERVER] Creating Mercado Pago preference with back_urls:", preference.back_urls)
+    console.log("[SERVER] Creating Mercado Pago preference with back_urls:", preference.back_urls)
 
     // Call Mercado Pago API
     const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
@@ -102,11 +102,11 @@ export async function POST(request: Request) {
       body: JSON.stringify(preference),
     })
 
-    console.log("[v0] [SERVER] Mercado Pago response status:", response.status)
+    console.log("[SERVER] Mercado Pago response status:", response.status)
 
     if (!response.ok) {
       const error = await response.text()
-      console.error("[v0] [SERVER] Mercado Pago API error:", error)
+      console.error("[SERVER] Mercado Pago API error:", error)
       return NextResponse.json(
         {
           error: "Failed to create preference",
@@ -117,14 +117,15 @@ export async function POST(request: Request) {
     }
 
     const data = await response.json()
-    console.log("[v0] [SERVER] Mercado Pago preference created:", data.id)
+    console.log("[SERVER] Mercado Pago preference created:", data.id)
 
     return NextResponse.json({
       preferenceId: data.id,
       initPoint: data.init_point,
+      sandboxInitPoint: data.sandbox_init_point,
     })
   } catch (error) {
-    console.error("[v0] [SERVER] Error creating subscription:", error)
+    console.error("[SERVER] Error creating subscription:", error)
     return NextResponse.json(
       {
         error: "Internal server error",
